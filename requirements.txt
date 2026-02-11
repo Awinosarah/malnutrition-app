@@ -7,3 +7,5 @@ geopandas
 shapely
 pyproj
 fiona
+folium
+streamlit-folium
