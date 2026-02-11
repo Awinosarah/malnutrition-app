@@ -83,6 +83,7 @@ def classify_risk_seasonal(admissions, month_mean, month_std):
     else:
         return "Normal"
 
+
 def clean_column_names(df):
     df.columns = (
         df.columns
@@ -97,6 +98,7 @@ def clean_column_names(df):
     )
     return df
 
+
 def parse_date(date_str):
     try:
         parts = str(date_str).split()
@@ -106,6 +108,7 @@ def parse_date(date_str):
         return pd.Timestamp(year=year, month=month_num, day=1)
     except:
         return pd.to_datetime(date_str, errors='coerce')
+
 
 def read_csv_with_retry(file):
     try:
@@ -124,6 +127,7 @@ def read_csv_with_retry(file):
             file.seek(0)
         df = pd.read_csv(file, encoding='utf-8', on_bad_lines='skip')
         return df
+
 
 class DataProcessor:
     def __init__(self, config: Config):
@@ -152,7 +156,6 @@ class DataProcessor:
         features_dict = _self._get_curated_features(df)
 
         return df.dropna(subset=['target']), features_dict, list(features_dict.keys())
-
 
     def _calculate_seasonal_statistics(self, df):
         df['month_mean'] = np.nan
@@ -340,6 +343,7 @@ class ModelTrainer:
 
         return pd.DataFrame(forecasts)
 
+
 def main():
     st.set_page_config(page_title=Config.PAGE_TITLE, layout=Config.PAGE_LAYOUT)
     st.title("Acute Malnutrition Early Warning System")
@@ -447,7 +451,6 @@ def main():
                     )
                     st.plotly_chart(fig_rel, use_container_width=True)
 
-            
                 with tab1:
                     st.subheader("Model Performance")
                     metrics = result['metrics']
@@ -457,18 +460,69 @@ def main():
                     st.markdown("### Confusion Matrix")
                     st.dataframe(cm, use_container_width=True)
 
-
                 with tab2:
                     st.subheader("Forecasts")
                     st.dataframe(forecast_df, use_container_width=True)
-                with tab3:
-                    if geo_file:
-                        geojson = gpd.read_file(geo_file)
-                        st.write("Risk map not implemented yet — placeholder for future interactive map")
-                    else:
-                        st.info("Upload GeoJSON file to display risk map.")
 
-             
+                with tab3:
+                    st.subheader("Geographic Risk Distribution")
+
+                    if geo_file is not None:
+                        try:
+                            # Load GeoJSON
+                            gdf = gpd.read_file(geo_file)
+
+                            # Identify district column
+                            name_col = next((c for c in gdf.columns if 'name' in c.lower() or 'dist' in c.lower()), None)
+                            if name_col:
+                                gdf = gdf.rename(columns={name_col: 'District'})
+                            else:
+                                st.warning("Could not find district name column in GeoJSON")
+                                st.stop()
+
+                            # Prepare forecast data
+                            forecast_df_display = forecast_df.copy()
+                            forecast_df_display['Month_Year'] = forecast_df_display['Date'].dt.strftime('%B %Y')
+
+                            # Choose month to display
+                            selected_map_month = st.selectbox("Select Month:", forecast_df_display['Month_Year'].unique())
+                            month_data = forecast_df_display[forecast_df_display['Month_Year'] == selected_map_month]
+
+                            # Merge GeoJSON with forecast
+                            map_data = gdf.merge(month_data, on='District', how='left')
+
+                            # Create folium map
+                            center_lat = map_data.geometry.centroid.y.mean()
+                            center_lon = map_data.geometry.centroid.x.mean()
+                            m = folium.Map(location=[center_lat, center_lon], zoom_start=6)
+
+                            # Color dictionary
+                            RISK_COLORS = Config.RISK_COLORS
+
+                            # Add polygons
+                            for _, row in map_data.iterrows():
+                                risk = row.get('Risk', 'No Data')
+                                color = RISK_COLORS.get(risk, "#95a5a6")
+                                geo_json = folium.GeoJson(
+                                    row['geometry'],
+                                    style_function=lambda feature, color=color: {
+                                        'fillColor': color,
+                                        'color': 'black',
+                                        'weight': 1,
+                                        'fillOpacity': 0.6
+                                    },
+                                    tooltip=folium.Tooltip(f"{row['District']}: {risk}")
+                                )
+                                geo_json.add_to(m)
+
+                            # Display map in Streamlit
+                            st_folium(m, width=700, height=500)
+
+                        except Exception as e:
+                            st.error(f"Error displaying map: {str(e)}")
+                    else:
+                        st.info("Upload GeoJSON file to view risk maps.")
+
                 with tab4:
                     st.subheader("Feature Importance")
                     model = result['model']
@@ -483,6 +537,7 @@ def main():
 
         except Exception as e:
             st.error(f"Error processing file: {e}")
+
 
 if __name__ == "__main__":
     main()
